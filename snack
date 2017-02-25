@@ -1,1 +1,314 @@
 
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 2016/10/08 21:48:36
+// Design Name: 
+// Module Name: snacktop
+
+//////////////////////////////////////////////////////////////////////////////////
+
+module snacktop(
+input mclk,
+input up,
+input down,
+input left,
+input right,
+input stop,
+input rst,
+output clkp,
+output reg[3:0] vga_red,
+output reg[3:0] vga_green,
+output reg[3:0] vga_blue,
+output reg vga_hsync,
+output reg vga_vsync                                   // **************** for pic change **************//  
+    );
+    //Timing constants
+      parameter hRez   = 640;
+      parameter hStartSync   = 640+16;
+      parameter hEndSync     = 640+16+96;
+      parameter hMaxCount    = 800;
+    
+      parameter vRez         = 480;
+      parameter vStartSync   = 480+10;
+      parameter vEndSync     = 480+10+2;
+      parameter vMaxCount    = 480+10+2+33;
+      parameter step  = 10'd16;
+    
+    parameter hsync_active   =0;
+    parameter vsync_active  = 0;                  
+    reg[9:0] hCounter;
+    reg[9:0] vCounter;    
+    reg blank;
+   initial   hCounter = 10'b0;
+   initial   vCounter = 10'b0;  
+   initial   blank = 1'b1;    
+
+   parameter C_BLACK    =   12'b000000000000;
+   parameter C_RED    =   12'b111100000000;
+   parameter C_GREEN    =   12'b000011110000;
+   parameter C_BLUE    =   12'b000000001111;
+   parameter C_WHITE    =   12'b111111111111;
+    
+  reg [11:0] colour;
+  wire clk25;
+   clk_wiz_0 sysclk(
+  .clk_in1(mclk),
+  .clk_out1(clk25)
+  );
+  
+  reg [5:0] addr1;
+  wire [143:0] data;
+   blk_mem_gen_0 rom1 (
+    .clka(mclk),    // input wire clka
+    .addra(addr1),  // input wire [5 : 0] addra
+    .douta(data)  // output wire [143 : 0] douta
+  );
+   
+  // *******************  control the speed   *************************//
+  reg [3:0] num;
+  reg clkp;
+always@(posedge vga_vsync) begin
+   if(num<4'd15)  begin num <= num+4'b1; end
+   else begin num <= 4'b0; clkp <= ~clkp; end
+end
+//    always@(*)begin
+//      if( hCounter < 160 && vCounter <120)
+//         colour <= C_WHITE;
+
+  reg [9:0] a0,b0,a1,b1,a2,b2,a3,b3,a4,b4,a5,b5,a6,b6,a7,b7,a8,b8,a9,b9,a10,b10,a11,b11,a12,b12,a13,b13,a14,b14;           //  Should be initialized 
+  reg [9:0] a0_temp,b0_temp;
+  reg [5:0] a0_c; 
+  reg [4:0] b0_c;
+
+//*********************************   random num for a0,b0   ***************************// 
+  always@( posedge clk25)  begin                                    
+     if(a0_c<6'd40)  begin
+       if(up || down) begin 
+        a0_c <=a0_c+1; b0_c <=b0_c;
+       end
+       end
+     else  a0_c <=0; 
+
+     
+     if(a0_c<6'd30)  begin
+            if(left || right)   begin b0_c <=b0_c+1; a0_c <=a0_c;  end
+            end
+          else b0_c <=0;
+  end
+
+//******************************   control direction   ********************************//
+     reg [3:0] sel;
+    always@(posedge clk25 or negedge rst) begin              
+    if(!rst)  begin
+      sel <=4'b0000;
+    end
+      else  begin
+         if(stop)                  sel<=4'b0000; 
+         if(up && sel!=4'b0010)    sel<=4'b0001;
+         if(down && sel!=4'b0001)  sel<=4'b0010;
+         if(left && sel!=4'b1000)  sel<=4'b0100;
+         if(right && sel!=4'b0100) sel<=4'b1000;
+    end
+   end
+  
+ //****************************   grow longer    *****************************//
+    reg food;
+    reg grow;
+    reg over;
+    always@(posedge clk25 or negedge rst)  begin          
+       if(!rst)  begin   food <=0;   grow <= 0; over <= 0; end
+       else  begin 
+         case(sel)
+           4'b0001: begin
+            if((hCounter==a1+10'd8)&&(vCounter==b1-10'd8)) begin
+               if(colour==C_RED)  begin food <=1; grow <= 1; end
+               else  begin food <=0;  grow <= 0; end
+               if(colour==C_BLUE)  over <=1;
+               else over <=0;
+             end                  
+           end
+           4'b0010: begin
+           if((hCounter==a1+10'd8)&&(vCounter==b1+10'd24)) begin
+               if(colour==C_RED)  begin food <=1; grow <= 1; end
+               else begin food <=0;  grow <= 0; end
+               if(colour==C_BLUE)  over <=1;
+               else over <=0;
+              end
+           end
+           4'b0100: begin
+           if((hCounter==a1-10'd8)&&(vCounter==b1+10'd8)) begin
+               if(colour==C_RED)  begin food <=1; grow <= 1; end
+               else begin food <=0;  grow <= 0; end
+               if(colour==C_BLUE)  over <=1;
+               else over <=0;
+              end
+           end
+           4'b1000: begin
+           if((hCounter==a1+10'd24)&&(vCounter==b1+10'd8)) begin
+               if(colour==C_RED)  begin food <=1; grow <= 1; end
+               else begin food <=0;  grow <= 0; end
+               if(colour==C_BLUE)  over <=1;
+               else over <=0;
+              end           
+           end
+         endcase
+       end
+    end
+ 
+//*****************************   move per clkp   ********************************//
+   reg [3:0] length;
+   reg ed;
+   always@(posedge clkp or negedge rst)  begin
+    if(!rst) begin
+         a1<=10'd48;         b1<=10'd160;
+         a2<=10'd32;         b2<=10'd160;
+         a3<=10'd16;         b3<=10'd160;
+         a4<=10'd0;          b4<=10'd160;
+         a0[9:4] <= a0_c;  b0[8:4] <= b0_c;  
+         length <=0;
+          ed <= 0;
+    end
+    else  begin
+     a0_temp[9:4] <= a0_c;  b0_temp[8:4] <= b0_c;
+     if(food)  begin                                                
+       if((a0_temp==a1)&&(b0_temp==b1)||(a0_temp==a2)&&(b0_temp==b2)||(a0_temp==a3)&&(b0_temp==b3)||(a0_temp==a4)&&(b0_temp==b4))  //!! problem of overlapping  !!// 
+         begin  a0<= a0_temp +step ;    b0 <= b0_temp + step;  end
+       else begin  a0 <= a0_temp;     b0 <= b0_temp;         end                  //����ʳ��㼰��䶯
+     end
+     if(grow)  begin
+        length <= length +4'b1;
+     end
+     if(over)  begin
+       ed<=1;
+     end
+
+     
+    case(sel)   
+         4'b0000: begin
+         a1<=a1;b1<=b1;
+         end                                  
+         4'b0001: begin
+           b1<=b1-step; a2<=a1; b2<=b1; a3<=a2; b3<=b2; a4<=a3; b4<=b3; a5<=a4; b5<=b4; a6<=a5; b6<=b5; a7<=a6; b7<=b6; 
+           a8<=a7; b8<=b7; a9<=a8; b9<=b8; a10<=a9; b10<=b9; a11<=a10; b11<=b10; a12<=a11; b12<=b11; a13<=a12; b13<=b12;
+            end
+         4'b0010:begin
+           b1<=b1+step; a2<=a1; b2<=b1; a3<=a2; b3<=b2; a4<=a3; b4<=b3; a5<=a4; b5<=b4; a6<=a5; b6<=b5; a7<=a6; b7<=b6; 
+           a8<=a7; b8<=b7; a9<=a8; b9<=b8; a10<=a9; b10<=b9; a11<=a10; b11<=b10; a12<=a11; b12<=b11; a13<=a12; b13<=b12;
+           end
+         4'b0100: begin
+           a1<=a1-step; a2<=a1; b2<=b1; a3<=a2; b3<=b2; a4<=a3; b4<=b3; a5<=a4; b5<=b4; a6<=a5; b6<=b5; a7<=a6; b7<=b6; 
+           a8<=a7; b8<=b7; a9<=a8; b9<=b8; a10<=a9; b10<=b9; a11<=a10; b11<=b10; a12<=a11; b12<=b11; a13<=a12; b13<=b12;
+           end
+         4'b1000:begin
+           a1<=a1+step; a2<=a1; b2<=b1; a3<=a2; b3<=b2; a4<=a3; b4<=b3; a5<=a4; b5<=b4; a6<=a5; b6<=b5; a7<=a6; b7<=b6; 
+           a8<=a7; b8<=b7; a9<=a8; b9<=b8; a10<=a9; b10<=b9; a11<=a10; b11<=b10; a12<=a11; b12<=b11; a13<=a12; b13<=b12;  
+           end
+         default: begin
+            a1<=a1+step; b1<=b1+step;
+           end
+       endcase  
+      end
+   end                                                
+    
+ //**********************  Display over   ******************************//
+ wire jeishu;
+ assign jieshu = (((hCounter>=10'd247)&&(hCounter<10'd391))&&((vCounter>=10'd224)&&(vCounter<10'd256)));
+ 
+ always@(posedge clk25) begin
+ 
+    if(jieshu == 1)begin   
+             addr1<=vCounter-10'd224;
+         end
+    else addr1 <=6'd0;
+ end
+ //*********************************************************//  
+ 
+  always@(posedge clk25)begin
+            if( hCounter == hMaxCount-1 )begin
+   				hCounter <=  10'b0;
+   				if (vCounter == vMaxCount-1 )
+   					vCounter <=  10'b0;
+   				else
+   					vCounter <= vCounter+1;
+   				end
+   			else
+   				hCounter <= hCounter+1;
+   				
+   				
+   				vga_red   <= colour[11:8];
+                vga_green <= colour[7:4];
+                vga_blue  <= colour[3:0];   
+   
+   			if (blank ==0) begin
+   	 //***************************   Display the body of snack   ******************************//
+               if(((a1>=0) && (a1<624)) &&(((b1>=0)&&(b1<464))&&ed==0))begin
+                if(((hCounter>=a0+1) && (hCounter <a0+step-1))&&((vCounter>=b0+1) && (vCounter <b0+step-1)))
+                      colour<= C_RED;
+                 else if(((hCounter>=a1+1) &&(hCounter <a1+step-1))&&( (vCounter>=b1+1) && (vCounter <b1+step-1)))
+                     colour<= C_BLUE;
+                 else if(((hCounter>=a2+1) && (hCounter <a2+step-1))&&(( vCounter>=b2+1) && (vCounter <b2+step-1)))
+                     colour<= C_BLUE;
+                 else if(((hCounter>=a3+1) && (hCounter <a3+step-1))&&(( vCounter>=b3+1) && (vCounter <b3+step-1)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a4+1) && (hCounter <a4+step-1))&&( (vCounter>=b4+1) && (vCounter <b4+step-1)))
+                     colour<= C_BLUE;   
+                 else  if(((hCounter>=a5+1) && (hCounter <a5+step-1))&&((( vCounter>=b5+1) && (vCounter <b5+step-1)) &&(length>4'd0)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a6+1) && (hCounter <a6+step-1))&&((( vCounter>=b6+1) && (vCounter <b6+step-1)) &&(length>4'd1)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a7+1 && hCounter <a7+step-1))&&( (vCounter>=b7+1) && ((vCounter <b7+step-1)) &&(length>4'd2)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a8+1 && hCounter <a8+step-1))&&( (vCounter>=b8+1) && ((vCounter <b8+step-1)) &&(length>4'd3)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a9+1 && hCounter <a9+step-1))&&( (vCounter>=b9+1) && ((vCounter <b9+step-1)) &&(length>4'd4)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a10+1 && hCounter <a10+step-1))&&( (vCounter>=b10+1) && ((vCounter <b10+step-1)) &&(length>4'd5)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a11+1 && hCounter <a11+step-1))&&( (vCounter>=b11+1) && ((vCounter <b11+step-1)) &&(length>4'd6)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a12+1 && hCounter <a12+step-1))&&( (vCounter>=b12+1) && ((vCounter <b12+step-1)) &&(length>4'd7)))
+                     colour<= C_BLUE;
+                 else  if(((hCounter>=a13+1 && hCounter <a13+step-1))&&( (vCounter>=b13+1) && ((vCounter <b13+step-1)) &&(length>4'd8)))
+                     colour<= C_BLUE;
+                 else  colour <= C_WHITE;
+                end
+                  else begin                   //    Display Game Over 
+                     if(data[hCounter-10'd247]&&jieshu == 1)begin   			  
+                        colour<= C_RED;
+                        end
+                     else  colour<= C_GREEN;
+                  end
+
+   				end
+   			else begin
+   				colour<= C_BLACK;
+   			     end;
+   	
+   			if(  vCounter  >= 480 || vCounter  < 0) begin
+   				blank <= 1;
+   				end
+   			else begin
+   				if ( hCounter  < 640 && hCounter  >= 0) begin
+   					blank <= 0;
+   					end
+   				else
+   					blank <= 1;
+   				end;
+   	
+   			// Are we in the hSync pulse? (one has been added to include frame_buffer_latency)
+   			if( hCounter > hStartSync && hCounter <= hEndSync)
+   				vga_hsync <= hsync_active;
+   			else
+   				vga_hsync <= ~ hsync_active;
+   			
+   
+   			// Are we in the vSync pulse?
+   			if( vCounter >= vStartSync && vCounter < vEndSync )
+   				vga_vsync <= vsync_active;
+   			else
+   				vga_vsync <= ~ vsync_active;
+   end 
+endmodule
